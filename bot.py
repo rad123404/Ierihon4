@@ -6,7 +6,6 @@ import os
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-
 import aiofiles
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -16,7 +15,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
 )
-from telegram.error import BadRequest, RetryAfter
+from telegram.error import BadRequest
 from telegram.constants import ParseMode
 
 logging.basicConfig(
@@ -28,7 +27,6 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("BOT_TOKEN")
 
 DATA_DIR = Path(__file__).parent
-# Нет необходимости в mkdir, так как директория скрипта уже существует
 
 BIRTHDAYS = []
 DUTIES_TEXT = ""
@@ -195,9 +193,6 @@ async def safe_edit(query, text, reply_markup=None, parse_mode=None):
     except BadRequest as e:
         if "not modified" not in str(e).lower():
             logger.warning(f"safe_edit error: {e}")
-    except RetryAfter as e:
-        logger.warning(f"Rate limit в safe_edit: ждём {e.retry_after} сек")
-        await asyncio.sleep(e.retry_after + 0.3)
     except Exception as e:
         logger.warning(f"safe_edit error: {e}")
 
@@ -226,14 +221,6 @@ async def fast_edit(bot, chat_id, msg_id, text):
     try:
         await bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=text)
         return True
-    except RetryAfter as e:
-        logger.warning(f"Rate limit в fast_edit: ждём {e.retry_after} сек")
-        await asyncio.sleep(e.retry_after + 0.5)
-        try:
-            await bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=text)
-            return True
-        except Exception:
-            return False
     except BadRequest as e:
         if "not modified" in str(e).lower():
             return True
@@ -477,9 +464,6 @@ async def main():
         ApplicationBuilder()
         .token(TOKEN)
         .concurrent_updates(50)
-        .read_timeout(35)
-        .write_timeout(35)
-        .connection_pool_size(50)
         .build()
     )
 
@@ -505,7 +489,6 @@ async def main():
     await app.updater.start_polling(
         drop_pending_updates=True,
         poll_interval=0.4,
-        timeout=35,
         allowed_updates=Update.ALL_TYPES
     )
 

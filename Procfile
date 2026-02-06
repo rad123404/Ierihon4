@@ -1,1 +1,1 @@
-worker: python IERIHON2.py
+worker: python bot.py

@@ -1,3 +1,7 @@
+# =============================================================================
+# ИМПОРТЫ И НАСТРОЙКА ЛОГИРОВАНИЯ
+# =============================================================================
+
 import asyncio
 import json
 import logging
@@ -25,6 +29,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# =============================================================================
+# КОНСТАНТЫ И ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
+# =============================================================================
+
 TOKEN = os.getenv("BOT_TOKEN")
 
 DATA_DIR = Path(__file__).parent
@@ -47,6 +56,10 @@ file_write_lock = asyncio.Lock()
 last_birthday_sent_date = None
 last_pinned_birthday_msg_id = {}
 
+
+# =============================================================================
+# РАБОТА С ФАЙЛАМИ СОСТОЯНИЯ (сохранение / загрузка голосований)
+# =============================================================================
 
 def get_file(chat_id: int, chat_title: str) -> Path:
     safe = re.sub(r'[^a-zA-Z0-9_-]', '_', chat_title or f"chat_{chat_id}")[:40]
@@ -89,6 +102,10 @@ async def load_state_from_file(chat_id: int, chat_title: str):
         return None
 
 
+# =============================================================================
+# РАБОТА С ДАТОЙ ПОСЛЕДНЕГО ПОЗДРАВЛЕНИЯ ДР
+# =============================================================================
+
 async def save_last_birthday_date(date_str: str):
     path = DATA_DIR / "last_birthday_sent.json"
     try:
@@ -114,6 +131,10 @@ async def load_last_birthday_date():
         logger.error(f"Ошибка чтения last_birthday_sent: {e}")
 
 
+# =============================================================================
+# ЗАГРУЗКА СТАТИЧЕСКИХ ДАННЫХ (ДР, дежурства, расписания)
+# =============================================================================
+
 def load_static_data():
     global BIRTHDAYS, DUTIES_TEXT, SCHEDULES
     try:
@@ -136,7 +157,9 @@ def load_static_data():
         logger.error(f"schedules: {e}")
 
 
-# ────────────────────────────────────────────── МЕНЮ ──────────────────────────────────────────────
+# =============================================================================
+# КНОПКИ И МЕНЮ (InlineKeyboardMarkup)
+# =============================================================================
 
 MAIN_MENU = InlineKeyboardMarkup([
     [InlineKeyboardButton("📅 Расписание",     callback_data="menu_schedule")],
@@ -146,8 +169,8 @@ MAIN_MENU = InlineKeyboardMarkup([
 ])
 
 PROFILE_MENU = InlineKeyboardMarkup([
-    [InlineKeyboardButton("📐 Математика (профиль)", callback_data="profile_math")],
-    [InlineKeyboardButton("🧪 Химия (профиль)",     callback_data="profile_chem")],
+    [InlineKeyboardButton("📐 Математика ", callback_data="profile_math")],
+    [InlineKeyboardButton("🧪 Химия ",     callback_data="profile_chem")],
     [InlineKeyboardButton("📘 База",                callback_data="profile_base")],
     [InlineKeyboardButton("↩️ Назад",               callback_data="back_main")],
 ])
@@ -188,6 +211,10 @@ BIRTHDAYS_MENU = InlineKeyboardMarkup([
     [InlineKeyboardButton("↩️ Назад", callback_data="back_main")],
 ])
 
+
+# =============================================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (редактирование сообщений, текст результатов)
+# =============================================================================
 
 async def safe_edit(query, text, reply_markup=None, parse_mode=None):
     try:
@@ -245,6 +272,10 @@ async def fast_edit(bot, chat_id, msg_id, text):
         logger.warning(f"fast_edit error: {e}")
         return False
 
+
+# =============================================================================
+# ПРОВЕРКА И ОТПРАВКА ПОЗДРАВЛЕНИЙ С ДНЁМ РОЖДЕНИЯ
+# =============================================================================
 
 async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
     global last_birthday_sent_date
@@ -315,6 +346,10 @@ async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
     await save_last_birthday_date(today_iso)
     logger.info("[ДР] Поздравление завершено успешно")
 
+
+# =============================================================================
+# ОБРАБОТЧИКИ КОМАНД И CALLBACK-ЗАПРОСОВ
+# =============================================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Выбери раздел:", reply_markup=MAIN_MENU)
@@ -451,6 +486,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+# =============================================================================
+# ЗАПУСК БОТА И ПЛАНИРОВЩИК ЗАДАЧ
+# =============================================================================
+
 async def main():
     load_static_data()
     await load_last_birthday_date()
@@ -511,6 +550,10 @@ async def main():
 
     await asyncio.Event().wait()
 
+
+# =============================================================================
+# ТОЧКА ВХОДА
+# =============================================================================
 
 if __name__ == "__main__":
     try:

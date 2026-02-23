@@ -250,44 +250,50 @@ async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
     global last_birthday_sent_date
 
     today = date.today()
-    today_str = today.strftime("%d.%m")
     today_iso = today.isoformat()
 
-    logger.info(f"[ДР] Проверка на {today_str} (iso: {today_iso})")
+    logger.info(f"[ДР] Проверка поздравлений {today_iso}")
 
     if last_birthday_sent_date == today_iso:
-        logger.info("[ДР] Уже поздравляли сегодня → пропуск")
+        logger.info("[ДР] Уже поздравляли сегодня")
         return
 
-    birthday_people = [b["name"] for b in BIRTHDAYS if b["date"] == today_str]
+    birthday_people = []
+
+    for b in BIRTHDAYS:
+        try:
+            raw = str(b.get("date", "")).strip()
+
+            if not raw or "." not in raw:
+                continue
+
+            d, m = map(int, raw.split("."))
+
+            if d == today.day and m == today.month:
+                birthday_people.append(str(b.get("name", "Без имени")))
+
+        except Exception as e:
+            logger.warning(f"[ДР] Ошибка записи ДР {b}: {e}")
 
     if not birthday_people:
-        logger.info(f"[ДР] Сегодня именинников нет")
         return
-
-    logger.info(f"[ДР] Именинники найдены: {birthday_people}")
 
     message = (
         "🎉 <b>С днём рождения!</b>\n\n"
-        + "\n".join(f"🎂 {name}" for name in birthday_people) +
-        "\n\nОт всего класса — счастья, здоровья, успехов и море позитива! "
+        + "\n".join(f"🎂 {name}" for name in birthday_people)
+        + "\n\nОт всего класса — счастья, здоровья, успехов и позитива!"
     )
 
     active_chats = list(chat_states.keys())
-    logger.info(f"[ДР] Активных чатов для отправки: {len(active_chats)} {active_chats}")
 
     if not active_chats:
-        logger.warning("[ДР] Нет активных чатов → поздравление не отправлено")
         return
 
     for chat_id in active_chats:
         try:
-            logger.info(f"[ДР] Пытаемся отправить в чат {chat_id}")
-
             if chat_id in last_pinned_birthday_msg_id:
                 try:
                     await context.bot.unpin_chat_message(chat_id=chat_id)
-                    logger.info(f"[ДР] Откреплено старое сообщение в {chat_id}")
                 except Exception:
                     pass
 
@@ -297,23 +303,23 @@ async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
                 parse_mode=ParseMode.HTML,
                 disable_notification=True
             )
-            logger.info(f"[ДР] Сообщение отправлено в {chat_id}, id: {sent_msg.message_id}")
 
-            await context.bot.pin_chat_message(
-                chat_id=chat_id,
-                message_id=sent_msg.message_id,
-                disable_notification=True
-            )
-            logger.info(f"[ДР] Сообщение закреплено в {chat_id}")
+            try:
+                await context.bot.pin_chat_message(
+                    chat_id=chat_id,
+                    message_id=sent_msg.message_id,
+                    disable_notification=True
+                )
+            except Exception:
+                pass
 
             last_pinned_birthday_msg_id[chat_id] = sent_msg.message_id
 
         except Exception as e:
-            logger.error(f"[ДР] Ошибка в чате {chat_id}: {e}")
+            logger.error(f"[ДР] Ошибка отправки в чат {chat_id}: {e}")
 
     last_birthday_sent_date = today_iso
     await save_last_birthday_date(today_iso)
-    logger.info("[ДР] Поздравление завершено успешно")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -486,10 +492,14 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(callback))
 
-    app.job_queue.run_once(
-        callback=check_birthdays,
-        when=5
-    )
+    # Проверка поздравлений сразу после старта (для рестарта Railway)
+app.job_queue.run_once(check_birthdays, when=10)
+
+# Ежедневная проверка в 00:05
+app.job_queue.run_daily(
+    check_birthdays,
+    time=time(hour=0, minute=5)
+)
 
     minsk_tz = timezone(timedelta(hours=3))
     midnight_minsk = time(21, 0, tzinfo=timezone.utc)
@@ -519,3 +529,4 @@ if __name__ == "__main__":
         logger.info("Бот остановлен")
     except Exception as e:
         logger.critical(f"Критическая ошибка запуска: {e}", exc_info=True)
+

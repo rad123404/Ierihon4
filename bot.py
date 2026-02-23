@@ -250,50 +250,44 @@ async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
     global last_birthday_sent_date
 
     today = date.today()
+    today_str = today.strftime("%d.%m")
     today_iso = today.isoformat()
 
-    logger.info(f"[ДР] Проверка поздравлений {today_iso}")
+    logger.info(f"[ДР] Проверка на {today_str} (iso: {today_iso})")
 
     if last_birthday_sent_date == today_iso:
-        logger.info("[ДР] Уже поздравляли сегодня")
+        logger.info("[ДР] Уже поздравляли сегодня → пропуск")
         return
 
-    birthday_people = []
-
-    for b in BIRTHDAYS:
-        try:
-            raw = str(b.get("date", "")).strip()
-
-            if not raw or "." not in raw:
-                continue
-
-            d, m = map(int, raw.split("."))
-
-            if d == today.day and m == today.month:
-                birthday_people.append(str(b.get("name", "Без имени")))
-
-        except Exception as e:
-            logger.warning(f"[ДР] Ошибка записи ДР {b}: {e}")
+    birthday_people = [b["name"] for b in BIRTHDAYS if b["date"] == today_str]
 
     if not birthday_people:
+        logger.info(f"[ДР] Сегодня именинников нет")
         return
+
+    logger.info(f"[ДР] Именинники найдены: {birthday_people}")
 
     message = (
         "🎉 <b>С днём рождения!</b>\n\n"
-        + "\n".join(f"🎂 {name}" for name in birthday_people)
-        + "\n\nОт всего класса — счастья, здоровья, успехов и позитива!"
+        + "\n".join(f"🎂 {name}" for name in birthday_people) +
+        "\n\nОт всего класса — счастья, здоровья, успехов и море позитива! "
     )
 
     active_chats = list(chat_states.keys())
+    logger.info(f"[ДР] Активных чатов для отправки: {len(active_chats)} {active_chats}")
 
     if not active_chats:
+        logger.warning("[ДР] Нет активных чатов → поздравление не отправлено")
         return
 
     for chat_id in active_chats:
         try:
+            logger.info(f"[ДР] Пытаемся отправить в чат {chat_id}")
+
             if chat_id in last_pinned_birthday_msg_id:
                 try:
                     await context.bot.unpin_chat_message(chat_id=chat_id)
+                    logger.info(f"[ДР] Откреплено старое сообщение в {chat_id}")
                 except Exception:
                     pass
 
@@ -302,24 +296,24 @@ async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
                 text=message,
                 parse_mode=ParseMode.HTML,
                 disable_notification=True
-            )
+            )   
+            logger.info(f"[ДР] Сообщение отправлено в {chat_id}, id: {sent_msg.message_id}")
 
-            try:
-                await context.bot.pin_chat_message(
-                    chat_id=chat_id,
-                    message_id=sent_msg.message_id,
-                    disable_notification=True
-                )
-            except Exception:
-                pass
+            await context.bot.pin_chat_message(
+                chat_id=chat_id,
+                message_id=sent_msg.message_id,
+                disable_notification=True
+            )
+            logger.info(f"[ДР] Сообщение закреплено в {chat_id}")
 
             last_pinned_birthday_msg_id[chat_id] = sent_msg.message_id
 
         except Exception as e:
-            logger.error(f"[ДР] Ошибка отправки в чат {chat_id}: {e}")
+            logger.error(f"[ДР] Ошибка в чате {chat_id}: {e}")
 
     last_birthday_sent_date = today_iso
     await save_last_birthday_date(today_iso)
+    logger.info("[ДР] Поздравление завершено успешно")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -462,11 +456,9 @@ async def main():
     await load_last_birthday_date()
 
     logger.info("Сканирую сохранённые чаты по именам файлов...")
-
     for file_path in DATA_DIR.glob("stolovaya_*.json"):
         try:
             filename = file_path.name
-
             if not filename.startswith("stolovaya_") or not filename.endswith(".json"):
                 continue
 
@@ -474,7 +466,6 @@ async def main():
             chat_id = int(chat_id_str)
 
             chat_states[chat_id]
-
             logger.info(f"Обнаружен и добавлен чат {chat_id} из файла {filename}")
 
         except ValueError as ve:
@@ -495,13 +486,17 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(callback))
 
-    # ✅ Проверка поздравлений сразу после старта
-    app.job_queue.run_once(check_birthdays, when=10)
+    app.job_queue.run_once(
+        callback=check_birthdays,
+        when=5
+    )
 
-    # ✅ Ежедневная проверка поздравлений
+    minsk_tz = timezone(timedelta(hours=3))
+    midnight_minsk = time(21, 0, tzinfo=timezone.utc)
+
     app.job_queue.run_daily(
-        check_birthdays,
-        time=time(hour=0, minute=5)
+        callback=check_birthdays,
+        time=midnight_minsk
     )
 
     await app.initialize()
@@ -517,4 +512,10 @@ async def main():
     await asyncio.Event().wait()
 
 
-
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Бот остановлен")
+    except Exception as e:
+        logger.critical(f"Критическая ошибка запуска: {e}", exc_info=True)

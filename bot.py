@@ -462,9 +462,11 @@ async def main():
     await load_last_birthday_date()
 
     logger.info("Сканирую сохранённые чаты по именам файлов...")
+
     for file_path in DATA_DIR.glob("stolovaya_*.json"):
         try:
             filename = file_path.name
+
             if not filename.startswith("stolovaya_") or not filename.endswith(".json"):
                 continue
 
@@ -472,6 +474,7 @@ async def main():
             chat_id = int(chat_id_str)
 
             chat_states[chat_id]
+
             logger.info(f"Обнаружен и добавлен чат {chat_id} из файла {filename}")
 
         except ValueError as ve:
@@ -492,21 +495,13 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(callback))
 
-    # Проверка поздравлений сразу после старта (для рестарта Railway)
-app.job_queue.run_once(check_birthdays, when=10)
+    # ✅ Проверка поздравлений сразу после старта
+    app.job_queue.run_once(check_birthdays, when=10)
 
-# Ежедневная проверка в 00:05
-app.job_queue.run_daily(
-    check_birthdays,
-    time=time(hour=0, minute=5)
-)
-
-        minsk_tz = timezone(timedelta(hours=3))
-    midnight_minsk = time(21, 0, tzinfo=timezone.utc)
-
+    # ✅ Ежедневная проверка поздравлений
     app.job_queue.run_daily(
-        callback=check_birthdays,
-        time=midnight_minsk
+        check_birthdays,
+        time=time(hour=0, minute=5)
     )
 
     await app.initialize()
@@ -521,13 +516,5 @@ app.job_queue.run_daily(
 
     await asyncio.Event().wait()
 
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Бот остановлен")
-    except Exception as e:
-        logger.critical(f"Критическая ошибка запуска: {e}", exc_info=True)
 
 

@@ -501,7 +501,7 @@ app.job_queue.run_daily(
     time=time(hour=0, minute=5)
 )
 
-    minsk_tz = timezone(timedelta(hours=3))
+        minsk_tz = timezone(timedelta(hours=3))
     midnight_minsk = time(21, 0, tzinfo=timezone.utc)
 
     app.job_queue.run_daily(
@@ -529,4 +529,5 @@ if __name__ == "__main__":
         logger.info("Бот остановлен")
     except Exception as e:
         logger.critical(f"Критическая ошибка запуска: {e}", exc_info=True)
+
 

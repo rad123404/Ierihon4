@@ -1,7 +1,3 @@
-# =============================================================================
-# ИМПОРТЫ И НАСТРОЙКА ЛОГИРОВАНИЯ
-# =============================================================================
-
 import asyncio
 import json
 import logging
@@ -29,14 +25,31 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-# =============================================================================
-# КОНСТАНТЫ И ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
-# =============================================================================
-
 TOKEN = os.getenv("BOT_TOKEN")
 
 DATA_DIR = Path(__file__).parent
+
+# ===================== KNOWN CHATS SYSTEM =====================
+KNOWN_CHATS_FILE = DATA_DIR / "known_chats.json"
+known_chats = set()
+
+async def load_known_chats():
+    global known_chats
+    if KNOWN_CHATS_FILE.exists():
+        async with aiofiles.open(KNOWN_CHATS_FILE, "r", encoding="utf-8") as f:
+            known_chats = set(json.loads(await f.read()))
+
+async def save_known_chats():
+    async with aiofiles.open(KNOWN_CHATS_FILE, "w", encoding="utf-8") as f:
+        await f.write(json.dumps(list(known_chats)))
+
+async def register_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if chat_id not in known_chats:
+        known_chats.add(chat_id)
+        await save_known_chats()
+# ===============================================================
+
 # Нет необходимости в mkdir, так как директория скрипта уже существует
 
 BIRTHDAYS = []
@@ -56,10 +69,6 @@ file_write_lock = asyncio.Lock()
 last_birthday_sent_date = None
 last_pinned_birthday_msg_id = {}
 
-
-# =============================================================================
-# РАБОТА С ФАЙЛАМИ СОСТОЯНИЯ (сохранение / загрузка голосований)
-# =============================================================================
 
 def get_file(chat_id: int, chat_title: str) -> Path:
     safe = re.sub(r'[^a-zA-Z0-9_-]', '_', chat_title or f"chat_{chat_id}")[:40]
@@ -102,10 +111,6 @@ async def load_state_from_file(chat_id: int, chat_title: str):
         return None
 
 
-# =============================================================================
-# РАБОТА С ДАТОЙ ПОСЛЕДНЕГО ПОЗДРАВЛЕНИЯ ДР
-# =============================================================================
-
 async def save_last_birthday_date(date_str: str):
     path = DATA_DIR / "last_birthday_sent.json"
     try:
@@ -131,10 +136,6 @@ async def load_last_birthday_date():
         logger.error(f"Ошибка чтения last_birthday_sent: {e}")
 
 
-# =============================================================================
-# ЗАГРУЗКА СТАТИЧЕСКИХ ДАННЫХ (ДР, дежурства, расписания)
-# =============================================================================
-
 def load_static_data():
     global BIRTHDAYS, DUTIES_TEXT, SCHEDULES
     try:
@@ -157,9 +158,7 @@ def load_static_data():
         logger.error(f"schedules: {e}")
 
 
-# =============================================================================
-# КНОПКИ И МЕНЮ (InlineKeyboardMarkup)
-# =============================================================================
+# ────────────────────────────────────────────── МЕНЮ ──────────────────────────────────────────────
 
 MAIN_MENU = InlineKeyboardMarkup([
     [InlineKeyboardButton("📅 Расписание",     callback_data="menu_schedule")],
@@ -169,8 +168,8 @@ MAIN_MENU = InlineKeyboardMarkup([
 ])
 
 PROFILE_MENU = InlineKeyboardMarkup([
-    [InlineKeyboardButton("📐 Математика ", callback_data="profile_math")],
-    [InlineKeyboardButton("🧪 Химия ",     callback_data="profile_chem")],
+    [InlineKeyboardButton("📐 Математика (профиль)", callback_data="profile_math")],
+    [InlineKeyboardButton("🧪 Химия (профиль)",     callback_data="profile_chem")],
     [InlineKeyboardButton("📘 База",                callback_data="profile_base")],
     [InlineKeyboardButton("↩️ Назад",               callback_data="back_main")],
 ])
@@ -211,10 +210,6 @@ BIRTHDAYS_MENU = InlineKeyboardMarkup([
     [InlineKeyboardButton("↩️ Назад", callback_data="back_main")],
 ])
 
-
-# =============================================================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (редактирование сообщений, текст результатов)
-# =============================================================================
 
 async def safe_edit(query, text, reply_markup=None, parse_mode=None):
     try:
@@ -273,10 +268,6 @@ async def fast_edit(bot, chat_id, msg_id, text):
         return False
 
 
-# =============================================================================
-# ПРОВЕРКА И ОТПРАВКА ПОЗДРАВЛЕНИЙ С ДНЁМ РОЖДЕНИЯ
-# =============================================================================
-
 async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
     global last_birthday_sent_date
 
@@ -304,7 +295,7 @@ async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
         "\n\nОт всего класса — счастья, здоровья, успехов и море позитива! "
     )
 
-    active_chats = list(chat_states.keys())
+    active_chats = list(known_chats)
     logger.info(f"[ДР] Активных чатов для отправки: {len(active_chats)} {active_chats}")
 
     if not active_chats:
@@ -347,11 +338,8 @@ async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
     logger.info("[ДР] Поздравление завершено успешно")
 
 
-# =============================================================================
-# ОБРАБОТЧИКИ КОМАНД И CALLBACK-ЗАПРОСОВ
-# =============================================================================
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await register_chat(update, context)
     await update.message.reply_text("Выбери раздел:", reply_markup=MAIN_MENU)
 
 
@@ -486,13 +474,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-# =============================================================================
-# ЗАПУСК БОТА И ПЛАНИРОВЩИК ЗАДАЧ
-# =============================================================================
-
 async def main():
     load_static_data()
     await load_last_birthday_date()
+    await load_known_chats()
 
     logger.info("Сканирую сохранённые чаты по именам файлов...")
     for file_path in DATA_DIR.glob("stolovaya_*.json"):
@@ -522,6 +507,7 @@ async def main():
         .build()
     )
 
+    app.add_handler(MessageHandler(filters.ALL, register_chat), group=0)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(callback))
 
@@ -541,19 +527,8 @@ async def main():
     await app.initialize()
     await app.start()
 
-    await app.updater.start_polling(
-        drop_pending_updates=True,
-        poll_interval=0.4,
-        timeout=35,
-        allowed_updates=Update.ALL_TYPES
-    )
+    await app.run_polling()
 
-    await asyncio.Event().wait()
-
-
-# =============================================================================
-# ТОЧКА ВХОДА
-# =============================================================================
 
 if __name__ == "__main__":
     try:

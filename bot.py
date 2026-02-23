@@ -194,16 +194,51 @@ async def safe_edit(query, text, reply_markup=None, parse_mode=None):
         await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
     except BadRequest as e:
         if "not modified" not in str(e).lower():
-            lo...(truncated 3988 characters)...}"))
+            logger.warning(f"Edit failed: {e}")
 
-            last_pinned_birthday_msg_id[chat_id] = sent_msg.message_id
 
-        except Exception as e:
-            logger.error(f"[ДР] Ошибка в чате {chat_id}: {e}")
+def get_results_text(votes):
+    eat = []
+    no_eat = []
+    absent = []
 
-    last_birthday_sent_date = today_iso
-    await save_last_birthday_date(today_iso)
-    logger.info("[ДР] Поздравление завершено успешно")
+    for v in votes.values():
+        name = v["name"]
+        if uname := v.get("username"):
+            name = f"@{uname}"
+        if v["status"] == "eat":
+            eat.append(name)
+        elif v["status"] == "no_eat":
+            no_eat.append(name)
+        elif v["status"] == "absent":
+            absent.append(name)
+
+    total_voted = len(votes)
+    text = f"🍽 Итоги опроса ({total_voted} голосов)\n\n"
+
+    if eat:
+        text += "🍲 Будут есть:\n" + "\n".join(f"  • {n}" for n in sorted(eat)) + "\n\n"
+    if no_eat:
+        text += "🙅 Не будут есть:\n" + "\n".join(f"  • {n}" for n in sorted(no_eat)) + "\n\n"
+    if absent:
+        text += "🏫 Не в школе:\n" + "\n".join(f"  • {n}" for n in sorted(absent)) + "\n\n"
+
+    return text
+
+
+async def fast_edit(bot, chat_id, message_id, text):
+    try:
+        await bot.edit_message_text(text=text, chat_id=chat_id, message_id=message_id)
+        return True
+    except RetryAfter as ra:
+        await asyncio.sleep(ra.retry_after + 0.5)
+        return False
+    except BadRequest as br:
+        if "not modified" in str(br).lower():
+            return True
+        return False
+    except Exception:
+        return False
 
 
 async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
@@ -273,6 +308,19 @@ async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.message.chat
+    if chat.type in ('group', 'supergroup'):
+        chat_id = chat.id
+        chat_title = chat.title
+        # Добавляем чат в состояния для отправки ДР, даже если нет опроса
+        state = chat_states[chat_id]
+        # Если нужно, можно загрузить состояние
+        if not state["votes"]:
+            loaded = await load_state_from_file(chat_id, chat_title)
+            if loaded:
+                state.update(loaded)
+                state["last_save"] = datetime.utcnow().timestamp() - 25
+                state["dirty"] = False
     await update.message.reply_text("Выбери раздел:", reply_markup=MAIN_MENU)
 
 

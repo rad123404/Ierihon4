@@ -27,9 +27,8 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
 
-STATIC_DIR = Path(__file__).parent
-SAVE_DIR = Path("/data")
-SAVE_DIR.mkdir(exist_ok=True)  # Ensure save directory exists
+DATA_DIR = Path(__file__).parent
+# Нет необходимости в mkdir, так как директория скрипта уже существует
 
 BIRTHDAYS = []
 DUTIES_TEXT = ""
@@ -51,7 +50,7 @@ last_pinned_birthday_msg_id = {}
 
 def get_file(chat_id: int, chat_title: str) -> Path:
     safe = re.sub(r'[^a-zA-Z0-9_-]', '_', chat_title or f"chat_{chat_id}")[:40]
-    return SAVE_DIR / f"stolovaya_{safe}_{chat_id}.json"
+    return DATA_DIR / f"stolovaya_{safe}_{chat_id}.json"
 
 
 async def save_state_periodically(chat_id: int, chat_title: str):
@@ -91,7 +90,7 @@ async def load_state_from_file(chat_id: int, chat_title: str):
 
 
 async def save_last_birthday_date(date_str: str):
-    path = SAVE_DIR / "last_birthday_sent.json"
+    path = DATA_DIR / "last_birthday_sent.json"
     try:
         async with aiofiles.open(path, "w", encoding="utf-8") as f:
             await f.write(json.dumps({"date": date_str}))
@@ -102,7 +101,7 @@ async def save_last_birthday_date(date_str: str):
 
 async def load_last_birthday_date():
     global last_birthday_sent_date
-    path = SAVE_DIR / "last_birthday_sent.json"
+    path = DATA_DIR / "last_birthday_sent.json"
     if not path.exists():
         logger.info("Файл last_birthday_sent.json не найден → первая проверка ДР")
         return
@@ -118,20 +117,20 @@ async def load_last_birthday_date():
 def load_static_data():
     global BIRTHDAYS, DUTIES_TEXT, SCHEDULES
     try:
-        with (STATIC_DIR / "data_birthdays.json").open("r", encoding="utf-8") as f:
+        with (DATA_DIR / "data_birthdays.json").open("r", encoding="utf-8") as f:
             BIRTHDAYS = json.load(f)
         logger.info(f"Загружено {len(BIRTHDAYS)} дней рождения")
     except Exception as e:
         logger.error(f"birthdays: {e}")
 
     try:
-        with (STATIC_DIR / "data_duties.json").open("r", encoding="utf-8") as f:
+        with (DATA_DIR / "data_duties.json").open("r", encoding="utf-8") as f:
             DUTIES_TEXT = json.load(f)["text"]
     except Exception as e:
         logger.error(f"duties: {e}")
 
     try:
-        with (STATIC_DIR / "data_schedules.json").open("r", encoding="utf-8") as f:
+        with (DATA_DIR / "data_schedules.json").open("r", encoding="utf-8") as f:
             SCHEDULES = json.load(f)
     except Exception as e:
         logger.error(f"schedules: {e}")
@@ -195,22 +194,7 @@ async def safe_edit(query, text, reply_markup=None, parse_mode=None):
         await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
     except BadRequest as e:
         if "not modified" not in str(e).lower():
-            logger.error(f"Ошибка редактирования: {e}")
-
-
-async def fast_edit(bot, chat_id, message_id, text):
-    try:
-        await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
-        return True
-    except RetryAfter as ra:
-        await asyncio.sleep(ra.retry_after + 0.5)
-        try:
-            await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
-            return True
-        except Exception:
-            return False
-    except Exception:
-        return False
+            logger.warning(f"Edit failed: {e}")
 
 
 def get_results_text(votes):
@@ -229,54 +213,77 @@ def get_results_text(votes):
         elif v["status"] == "absent":
             absent.append(name)
 
-    text = "📊 Итоги опроса:\n\n"
-    text += f"🍽 Будут есть ({len(eat)}): " + ", ".join(eat) + "\n\n" if eat else ""
-    text += f"🙅 Не будут есть ({len(no_eat)}): " + ", ".join(no_eat) + "\n\n" if no_eat else ""
-    text += f"🏫 Не будут в школе ({len(absent)}): " + ", ".join(absent) + "\n\n" if absent else ""
+    total_voted = len(votes)
+    text = f"🍽 Итоги опроса ({total_voted} голосов)\n\n"
 
-    if not votes:
-        text += "Пока никто не проголосовал."
+    if eat:
+        text += "🍲 Будут есть:\n" + "\n".join(f"  • {n}" for n in sorted(eat)) + "\n\n"
+    if no_eat:
+        text += "🙅 Не будут есть:\n" + "\n".join(f"  • {n}" for n in sorted(no_eat)) + "\n\n"
+    if absent:
+        text += "🏫 Не в школе:\n" + "\n".join(f"  • {n}" for n in sorted(absent)) + "\n\n"
 
     return text
+
+
+async def fast_edit(bot, chat_id, message_id, text):
+    try:
+        await bot.edit_message_text(text=text, chat_id=chat_id, message_id=message_id)
+        return True
+    except RetryAfter as ra:
+        await asyncio.sleep(ra.retry_after + 0.5)
+        return False
+    except BadRequest as br:
+        if "not modified" in str(br).lower():
+            return True
+        return False
+    except Exception:
+        return False
 
 
 async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
     global last_birthday_sent_date
 
-    minsk_tz = timezone(timedelta(hours=3))
-    today_minsk = datetime.now(minsk_tz).date()
-    today_iso = today_minsk.isoformat()
+    today = date.today()
+    today_md = f"{today.day:02d}.{today.month:02d}"
+    today_iso = today.isoformat()
 
-    if today_iso == last_birthday_sent_date:
+    if last_birthday_sent_date == today_iso:
         logger.info("[ДР] Уже поздравляли сегодня")
         return
 
-    today_fmt = f"{today_minsk.day:02d}.{today_minsk.month:02d}"
-    birthdays_today = [p for p in BIRTHDAYS if p["date"] == today_fmt]
-
+    birthdays_today = [p for p in BIRTHDAYS if p["date"] == today_md]
     if not birthdays_today:
         logger.info("[ДР] Сегодня нет ДР")
         return
 
-    text = "🎉 С днем рождения! 🥳\n\n"
-    text += "\n".join(f"• {p['name']}" for p in birthdays_today)
+    names = ", ".join(p["name"] for p in birthdays_today)
+    text = f"🎉 Сегодня день рождения у {names}!\nПоздравляем! 🥳🎂"
 
-    logger.info(f"[ДР] Поздравляем: {', '.join(p['name'] for p in birthdays_today)}")
+    logger.info(f"[ДР] Отправляю поздравление: {names}")
 
     for chat_id in list(chat_states.keys()):
         try:
-            if prev_msg_id := last_pinned_birthday_msg_id.get(chat_id):
+            if last_pinned_birthday_msg_id.get(chat_id):
                 try:
-                    await context.bot.unpin_chat_message(chat_id=chat_id, message_id=prev_msg_id)
+                    await context.bot.unpin_chat_message(chat_id=chat_id, message_id=last_pinned_birthday_msg_id[chat_id])
                 except Exception:
                     pass
 
-            sent_msg = await context.bot.send_message(chat_id=chat_id, text=text, disable_notification=True)
+            sent_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                disable_notification=True
+            )
 
             try:
-                await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_msg.message_id, disable_notification=True)
-            except Exception:
-                pass
+                await context.bot.pin_chat_message(
+                    chat_id=chat_id,
+                    message_id=sent_msg.message_id,
+                    disable_notification=True
+                )
+            except Exception as pe:
+                logger.warning(f"[ДР] Не удалось запинить в {chat_id}: {pe}")
 
             last_pinned_birthday_msg_id[chat_id] = sent_msg.message_id
 
@@ -289,6 +296,19 @@ async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.message.chat
+    if chat.type in ('group', 'supergroup'):
+        chat_id = chat.id
+        chat_title = chat.title
+        # Добавляем чат в состояния для отправки ДР, даже если нет опроса
+        state = chat_states[chat_id]
+        # Если нужно, можно загрузить состояние
+        if not state["votes"]:
+            loaded = await load_state_from_file(chat_id, chat_title)
+            if loaded:
+                state.update(loaded)
+                state["last_save"] = datetime.utcnow().timestamp() - 25
+                state["dirty"] = False
     await update.message.reply_text("Выбери раздел:", reply_markup=MAIN_MENU)
 
 
@@ -428,7 +448,7 @@ async def main():
     await load_last_birthday_date()
 
     logger.info("Сканирую сохранённые чаты по именам файлов...")
-    for file_path in SAVE_DIR.glob("stolovaya_*.json"):
+    for file_path in DATA_DIR.glob("stolovaya_*.json"):
         try:
             filename = file_path.name
             if not filename.startswith("stolovaya_") or not filename.endswith(".json"):

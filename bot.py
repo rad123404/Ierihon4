@@ -194,96 +194,117 @@ async def safe_edit(query, text, reply_markup=None, parse_mode=None):
         await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
     except BadRequest as e:
         if "not modified" not in str(e).lower():
-            logger.warning(f"Ошибка редактирования: {e}")
+            logger.warning(f"safe_edit error: {e}")
+    except RetryAfter as e:
+        logger.warning(f"Rate limit в safe_edit: ждём {e.retry_after} сек")
+        await asyncio.sleep(e.retry_after + 0.3)
+    except Exception as e:
+        logger.warning(f"safe_edit error: {e}")
 
 
-async def fast_edit(bot, chat_id, message_id, text):
+def get_results_text(votes):
+    def fmt(v):
+        name = v["name"]
+        un = v.get("username")
+        return f"{name} (@{un})" if un else name
+
+    eat    = [fmt(v) for v in votes.values() if v["status"] == "eat"]
+    no_eat = [fmt(v) for v in votes.values() if v["status"] == "no_eat"]
+    absent = [fmt(v) for v in votes.values() if v["status"] == "absent"]
+
+    return (
+        f"Результаты опроса: {len(votes)} голосов\n\n"
+        f"🍽 Будут есть ({len(eat)}):\n" + ("\n".join(eat) or "—") + "\n\n"
+        f"🙅 Не будут есть ({len(no_eat)}):\n" + ("\n".join(no_eat) or "—") + "\n\n"
+        f"🏫 Не придут ({len(absent)}):\n" + ("\n".join(absent) or "—")
+    )
+
+
+async def fast_edit(bot, chat_id, msg_id, text):
+    if not msg_id:
+        return False
     try:
-        await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
+        await bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=text)
         return True
-    except RetryAfter as ra:
-        logger.warning(f"Флуд-контроль: жду {ra.retry_after} сек")
-        await asyncio.sleep(ra.retry_after)
+    except RetryAfter as e:
+        logger.warning(f"Rate limit в fast_edit: ждём {e.retry_after} сек")
+        await asyncio.sleep(e.retry_after + 0.5)
         try:
-            await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
+            await bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=text)
             return True
         except Exception:
             return False
-    except BadRequest as br:
-        if "not modified" in str(br).lower():
+    except BadRequest as e:
+        if "not modified" in str(e).lower():
             return True
-        logger.warning(f"BadRequest: {br}")
+        if "message to edit not found" in str(e).lower():
+            return False
+        logger.warning(f"BadRequest в fast_edit: {e}")
         return False
     except Exception as e:
-        logger.error(f"Ошибка редактирования: {e}")
+        logger.warning(f"fast_edit error: {e}")
         return False
-
-
-def get_results_text(votes: dict) -> str:
-    eat = []
-    no_eat = []
-    absent = []
-
-    for user_data in votes.values():
-        name = user_data["name"]
-        username = user_data.get("username")
-        if username:
-            disp = f"@{username}"
-        else:
-            disp = name
-
-        if user_data["status"] == "eat":
-            eat.append(disp)
-        elif user_data["status"] == "no_eat":
-            no_eat.append(disp)
-        elif user_data["status"] == "absent":
-            absent.append(disp)
-
-    text = "📊 Итоги опроса\n\n"
-    text += f"🍽 Будут есть ({len(eat)}): {', '.join(eat) or '-'}\n\n"
-    text += f"🙅 Не будут есть ({len(no_eat)}): {', '.join(no_eat) or '-'}\n\n"
-    text += f"🏫 Не будут в школе ({len(absent)}): {', '.join(absent) or '-'}\n"
-
-    return text
 
 
 async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
     global last_birthday_sent_date
 
-    minsk_tz = timezone(timedelta(hours=3))
-    today = datetime.now(minsk_tz).date()
+    today = date.today()
+    today_str = today.strftime("%d.%m")
     today_iso = today.isoformat()
-    today_md = f"{today.day:02d}.{today.month:02d}"
+
+    logger.info(f"[ДР] Проверка на {today_str} (iso: {today_iso})")
 
     if last_birthday_sent_date == today_iso:
-        logger.info("[ДР] Уже поздравляли сегодня, пропуск")
+        logger.info("[ДР] Уже поздравляли сегодня → пропуск")
         return
 
-    birthdays_today = [p["name"] for p in BIRTHDAYS if p["date"] == today_md]
-    if not birthdays_today:
-        logger.info("[ДР] Сегодня нет ДР")
+    birthday_people = [b["name"] for b in BIRTHDAYS if b["date"] == today_str]
+
+    if not birthday_people:
+        logger.info(f"[ДР] Сегодня именинников нет")
         return
 
-    names = " и ".join(birthdays_today) if len(birthdays_today) > 1 else birthdays_today[0]
-    text = f"🎉 Поздравляем с Днём Рождения: {names}! 🥳\nЖелаем счастья, здоровья и успехов! 🎂"
+    logger.info(f"[ДР] Именинники найдены: {birthday_people}")
 
-    logger.info(f"[ДР] Поздравляем: {names}")
+    message = (
+        "🎉 <b>С днём рождения!</b>\n\n"
+        + "\n".join(f"🎂 {name}" for name in birthday_people) +
+        "\n\nОт всего класса — счастья, здоровья, успехов и море позитива! "
+    )
 
-    for chat_id in list(chat_states.keys()):
+    active_chats = list(chat_states.keys())
+    logger.info(f"[ДР] Активных чатов для отправки: {len(active_chats)} {active_chats}")
+
+    if not active_chats:
+        logger.warning("[ДР] Нет активных чатов → поздравление не отправлено")
+        return
+
+    for chat_id in active_chats:
         try:
-            sent_msg = await context.bot.send_message(chat_id=chat_id, text=text)
+            logger.info(f"[ДР] Пытаемся отправить в чат {chat_id}")
 
-            prev_msg_id = last_pinned_birthday_msg_id.get(chat_id)
-            if prev_msg_id:
+            if chat_id in last_pinned_birthday_msg_id:
                 try:
-                    await context.bot.unpin_chat_message(chat_id=chat_id, message_id=prev_msg_id)
+                    await context.bot.unpin_chat_message(chat_id=chat_id)
+                    logger.info(f"[ДР] Откреплено старое сообщение в {chat_id}")
                 except Exception:
                     pass
 
-            try:
-                await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_msg.message_id, disable_notification=True)
-            except Exception:
-                logger.warning(f"[ДР] Не удалось закрепить в {chat_id}")
+            sent_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=message,
+                parse_mode=ParseMode.HTML,
+                disable_notification=True
+            )
+            logger.info(f"[ДР] Сообщение отправлено в {chat_id}, id: {sent_msg.message_id}")
+
+            await context.bot.pin_chat_message(
+                chat_id=chat_id,
+                message_id=sent_msg.message_id,
+                disable_notification=True
+            )
+            logger.info(f"[ДР] Сообщение закреплено в {chat_id}")
 
             last_pinned_birthday_msg_id[chat_id] = sent_msg.message_id
 
@@ -470,10 +491,12 @@ async def main():
         when=5
     )
 
-    # ИСПРАВЛЕННЫЙ БЛОК — только это изменилось
+    minsk_tz = timezone(timedelta(hours=3))
+    midnight_minsk = time(21, 0, tzinfo=timezone.utc)
+
     app.job_queue.run_daily(
         callback=check_birthdays,
-        time=time(21, 0, 0)  # 21:00 UTC = 00:00 Минск
+        time=midnight_minsk
     )
 
     await app.initialize()

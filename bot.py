@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("BOT_TOKEN")
 
 DATA_DIR = Path(__file__).parent
+
+# Таймзона Минска
+MINSK_TZ = timezone(timedelta(hours=3))
 # Нет необходимости в mkdir, так как директория скрипта уже существует
 
 BIRTHDAYS = []
@@ -249,7 +252,7 @@ async def fast_edit(bot, chat_id, msg_id, text):
 async def check_birthdays(context: ContextTypes.DEFAULT_TYPE):
     global last_birthday_sent_date
 
-    today = date.today()
+    today = datetime.now(MINSK_TZ).date()
     today_str = today.strftime("%d.%m")
     today_iso = today.isoformat()
 
@@ -492,11 +495,9 @@ async def main():
     )
 
     minsk_tz = timezone(timedelta(hours=3))
-    midnight_minsk = time(21, 0, tzinfo=timezone.utc)
-
     app.job_queue.run_daily(
         callback=check_birthdays,
-        time=midnight_minsk
+        time=time(0, 0, tzinfo=MINSK_TZ)
     )
 
     await app.initialize()

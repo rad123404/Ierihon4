@@ -470,12 +470,10 @@ async def main():
         when=5
     )
 
-    minsk_tz = timezone(timedelta(hours=3))
-    midnight_minsk = time(21, 0, tzinfo=timezone.utc)
-
+    # ИСПРАВЛЕННЫЙ БЛОК — только это изменилось
     app.job_queue.run_daily(
         callback=check_birthdays,
-        time=midnight_minsk
+        time=time(21, 0, 0)  # 21:00 UTC = 00:00 Минск
     )
 
     await app.initialize()
